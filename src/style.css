@@ -6,3 +6,8 @@
 	--font-display: "Space Grotesk", sans-serif;
 	--shadow-panel: 0 12px 30px rgba(75, 61, 45, 0.12);
 }
+
+html {
+	-webkit-text-size-adjust: 100%;
+	text-size-adjust: 100%;
+}

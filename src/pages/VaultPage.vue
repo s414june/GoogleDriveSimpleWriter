@@ -569,7 +569,9 @@ watch(
 			</div>
 		</div>
 
-		<div v-show="mode === 'edit'" class="flex flex-1 min-h-0 flex-col gap-2.5">
+		<div
+			v-show="mode === 'edit'"
+			class="flex flex-1 min-h-0 min-w-0 flex-col gap-2.5">
 			<div
 				class="flex items-center justify-between gap-2 border-b-2 border-teal-500 pb-2">
 				<button
@@ -579,7 +581,7 @@ watch(
 				</button>
 				<input
 					:value="titleInput"
-					class="flex-1 rounded-lg border border-transparent bg-white px-3 py-1 text-sm font-semibold text-teal-700 outline-none focus:border-teal-300"
+					class="min-w-0 flex-1 rounded-lg border border-transparent bg-white px-3 py-1 text-sm font-semibold text-teal-700 outline-none focus:border-teal-300"
 					placeholder="輸入標題（留空會自動使用內容前10字）"
 					@input="onTitleInputEvent" />
 				<p class="text-xs font-medium text-teal-500">
@@ -625,16 +627,34 @@ watch(
 <style scoped>
 .vditor-host {
 	min-height: 0;
+	min-width: 0;
+	overflow-x: hidden;
 }
 
 .vditor-host :deep(.vditor) {
 	border: 0;
 	border-radius: 0;
 	height: 100%;
+	min-width: 0;
 }
 
 .vditor-host :deep(.vditor-reset) {
 	padding: 12px;
+	overflow-wrap: anywhere;
+	word-break: break-word;
+}
+
+.vditor-host :deep(.vditor-content),
+.vditor-host :deep(.vditor-ir),
+.vditor-host :deep(.vditor-wysiwyg) {
+	min-width: 0;
+	width: 100%;
+}
+
+.vditor-host :deep(.vditor-reset pre),
+.vditor-host :deep(.vditor-reset table) {
+	max-width: 100%;
+	overflow-x: auto;
 }
 
 .vditor-host :deep(.vditor-toolbar),
