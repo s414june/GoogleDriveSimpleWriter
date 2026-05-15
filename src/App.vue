@@ -34,6 +34,11 @@ async function doLogout(): Promise<void> {
 	await router.push("/setup")
 }
 
+function requestAddFolder(): void {
+	navMenuOpen.value = false
+	window.dispatchEvent(new CustomEvent("vault:add-folder"))
+}
+
 onMounted(() => {
 	window.addEventListener("online", onOnline)
 	window.addEventListener("offline", onOffline)
@@ -58,27 +63,42 @@ watch(
 			class="relative bg-teal-500 px-2 py-2 h-[40px] flex items-center w-full">
 			<div class="flex flex-wrap items-center justify-between gap-3 w-full">
 				<div class="flex items-center justify-center gap-2">
-					<button
-						v-if="showVaultMenu"
-						class="h-7 w-7 rounded-full border border-teal-100 text-xs font-bold text-white"
-						@click="navMenuOpen = !navMenuOpen">
-						☰
-					</button>
 					<p
 						class="text-white text-xs font-medium uppercase tracking-[0.08em] font-display">
 						Google Drive Simple Writer
 					</p>
+				</div>
+
+				<div class="flex items-center gap-2">
 					<div
 						class="rounded-full bg-fuchsia-100 px-3 py-1 text-xs font-bold text-fuchsia-500 border border-fuchsia-300"
 						:class="!online ? 'bg-rose-50 text-rose-700' : ''">
 						{{ online ? "Online" : "Offline" }}
 					</div>
+					<button
+						v-if="showVaultMenu"
+						class="h-7 w-7 text-xs font-bold text-white"
+						@click.stop="navMenuOpen = !navMenuOpen">
+						☰
+					</button>
 				</div>
 			</div>
 
+			<button
+				v-if="showVaultMenu && navMenuOpen"
+				class="fixed inset-0 z-20 cursor-default bg-transparent"
+				aria-label="關閉選單"
+				@click="navMenuOpen = false" />
+
 			<div
 				v-if="showVaultMenu && navMenuOpen"
-				class="absolute left-2 top-10 z-30 grid gap-2 rounded-xl border border-teal-200 bg-white p-2 shadow-lg">
+				class="absolute right-2 top-10 z-30 grid gap-2 rounded-xl border border-teal-200 bg-white p-2 shadow-lg"
+				@click.stop>
+				<button
+					class="rounded-full border border-teal-300 px-3 py-2 text-xs font-bold text-teal-600"
+					@click="requestAddFolder">
+					新增資料夾
+				</button>
 				<button
 					class="rounded-full border border-teal-300 px-3 py-2 text-xs font-bold text-teal-600"
 					@click="chooseAnotherRoot">

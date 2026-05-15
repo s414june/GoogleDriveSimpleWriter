@@ -63,7 +63,7 @@ function openFile(id: string): void {
 							? 'bg-teal-100 text-teal-700'
 							: 'text-teal-700 hover:bg-teal-50'
 					"
-					@click="openFolder(node.id)">
+					@click.stop="openFolder(node.id)">
 					📁 {{ node.name }}
 				</button>
 
@@ -75,7 +75,7 @@ function openFile(id: string): void {
 							? 'bg-cyan-100 text-cyan-700'
 							: 'text-cyan-700 hover:bg-cyan-50'
 					"
-					@click="openFile(node.id)">
+					@click.stop="openFile(node.id)">
 					📝 {{ node.name }}
 				</button>
 			</div>
