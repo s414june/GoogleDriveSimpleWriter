@@ -73,7 +73,7 @@ export async function listMarkdownFilesInFolder(
 	parentId: string,
 ): Promise<DriveMarkdownFile[]> {
 	const query = encodeURIComponent(
-		`'${parentId}' in parents and mimeType = 'text/markdown' and trashed = false`,
+		`'${parentId}' in parents and trashed = false and (mimeType = 'text/markdown' or (mimeType = 'text/plain' and name contains '.md'))`,
 	)
 	const fields = encodeURIComponent("files(id,name,modifiedTime)")
 	const orderBy = encodeURIComponent("name_natural")

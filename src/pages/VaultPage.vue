@@ -34,6 +34,7 @@ const mode = ref<"list" | "edit">("list")
 const editorHost = ref<HTMLDivElement | null>(null)
 
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
+let listAutoSyncTimer: ReturnType<typeof setInterval> | null = null
 let vditor: Vditor | null = null
 const autoSaving = ref(false)
 const autoSyncing = ref(false)
@@ -309,6 +310,8 @@ async function runAutoSync(): Promise<void> {
 		const summary = await syncVaultRoot(workspace.session.value, rootId.value)
 		if (summary.conflicts > 0) {
 			workspace.status.value = `偵測到 ${summary.conflicts} 個衝突，已建立衝突副本`
+		} else if (summary.skipped > 0) {
+			workspace.status.value = `略過 ${summary.skipped} 個無法存取的檔案（請在 Google Drive 授權此 App）`
 		}
 		if (summary.pushed > 0 || summary.pulled > 0 || summary.conflicts > 0) {
 			await refreshNodes()
@@ -319,6 +322,44 @@ async function runAutoSync(): Promise<void> {
 	} finally {
 		autoSyncing.value = false
 	}
+}
+
+function shouldSyncInListMode(): boolean {
+	return mode.value === "list" && !folderDialogOpen.value
+}
+
+function onResumeListSync(): void {
+	if (!shouldSyncInListMode()) {
+		return
+	}
+	void runAutoSync()
+}
+
+function startListAutoSync(): void {
+	if (listAutoSyncTimer) {
+		clearInterval(listAutoSyncTimer)
+	}
+	listAutoSyncTimer = setInterval(() => {
+		if (!shouldSyncInListMode()) {
+			return
+		}
+		void runAutoSync()
+	}, 20000)
+}
+
+function stopListAutoSync(): void {
+	if (!listAutoSyncTimer) {
+		return
+	}
+	clearInterval(listAutoSyncTimer)
+	listAutoSyncTimer = null
+}
+
+function onVisibilityChange(): void {
+	if (document.visibilityState !== "visible") {
+		return
+	}
+	onResumeListSync()
 }
 
 async function runAutoSave(force = false): Promise<void> {
@@ -467,6 +508,10 @@ async function doDelete(): Promise<void> {
 
 onMounted(async () => {
 	window.addEventListener("vault:add-folder", onAppRequestAddFolder)
+	window.addEventListener("focus", onResumeListSync)
+	window.addEventListener("online", onResumeListSync)
+	document.addEventListener("visibilitychange", onVisibilityChange)
+	startListAutoSync()
 
 	await workspace.restoreSessionFromStorage()
 	if (!workspace.session.value) {
@@ -481,10 +526,15 @@ onMounted(async () => {
 
 	selectedFolderId.value = rootId.value
 	await refreshNodes()
+	await runAutoSync()
 })
 
 onBeforeUnmount(() => {
 	window.removeEventListener("vault:add-folder", onAppRequestAddFolder)
+	window.removeEventListener("focus", onResumeListSync)
+	window.removeEventListener("online", onResumeListSync)
+	document.removeEventListener("visibilitychange", onVisibilityChange)
+	stopListAutoSync()
 
 	if (autoSaveTimer) {
 		clearTimeout(autoSaveTimer)
@@ -514,6 +564,10 @@ watch(
 			await ensureEditorReady()
 			applyEditorContent(editorContent.value)
 			return
+		}
+
+		if (value === "list" && oldValue !== "edit") {
+			void runAutoSync()
 		}
 
 		if (oldValue === "edit" && value === "list") {

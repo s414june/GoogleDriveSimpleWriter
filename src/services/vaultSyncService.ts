@@ -4,6 +4,8 @@ import {
 	createDriveMarkdownFile,
 	downloadMarkdown,
 	getDriveFileMetadata,
+	listChildFolders,
+	listMarkdownFilesInFolder,
 	uploadMarkdown,
 	updateDriveFileName,
 } from "./driveService"
@@ -38,6 +40,17 @@ function buildConflictName(original: string): string {
 	return `${base} (衝突 ${stamp}).md`
 }
 
+function isFileAuthorizationError(error: unknown): boolean {
+	if (!(error instanceof Error)) {
+		return false
+	}
+
+	return (
+		error.message.includes("appNotAuthorizedToFile") ||
+		error.message.includes("has not granted the app")
+	)
+}
+
 function depthOf(node: VaultNode, byId: Map<string, VaultNode>): number {
 	let depth = 0
 	let parentId = node.parentId
@@ -60,6 +73,60 @@ function resolveParentDriveId(
 		return rootId
 	}
 	return byId.get(node.parentId)?.driveId ?? null
+}
+
+interface RemoteFolderSnapshot {
+	id: string
+	name: string
+	parentDriveId: string
+}
+
+interface RemoteFileSnapshot {
+	id: string
+	name: string
+	modifiedAt: number
+	parentDriveId: string
+}
+
+interface RemoteVaultSnapshot {
+	folders: RemoteFolderSnapshot[]
+	files: RemoteFileSnapshot[]
+}
+
+async function scanRemoteVault(
+	accessToken: string,
+	rootId: string,
+): Promise<RemoteVaultSnapshot> {
+	const folders: RemoteFolderSnapshot[] = []
+	const files: RemoteFileSnapshot[] = []
+
+	async function walk(folderDriveId: string): Promise<void> {
+		const [childFolders, childFiles] = await Promise.all([
+			listChildFolders(accessToken, folderDriveId),
+			listMarkdownFilesInFolder(accessToken, folderDriveId),
+		])
+
+		for (const folder of childFolders) {
+			folders.push({
+				id: folder.id,
+				name: folder.name,
+				parentDriveId: folderDriveId,
+			})
+			await walk(folder.id)
+		}
+
+		for (const file of childFiles) {
+			files.push({
+				id: file.id,
+				name: normalizeFileName(file.name),
+				modifiedAt: toMillis(file.modifiedTime),
+				parentDriveId: folderDriveId,
+			})
+		}
+	}
+
+	await walk(rootId)
+	return { folders, files }
 }
 
 async function upsertNode(next: VaultNode): Promise<void> {
@@ -181,10 +248,19 @@ export async function syncVaultRoot(
 			remoteModifiedAt > file.updatedAt
 
 		if (remoteChangedAfterLocalEdit) {
-			const remoteContent = await downloadMarkdown(
-				session.accessToken,
-				file.driveId,
-			)
+			let remoteContent: string
+			try {
+				remoteContent = await downloadMarkdown(
+					session.accessToken,
+					file.driveId,
+				)
+			} catch (error) {
+				if (isFileAuthorizationError(error)) {
+					summary.skipped += 1
+					continue
+				}
+				throw error
+			}
 			if (remoteContent !== localContent) {
 				const conflictName = buildConflictName(file.name)
 				const conflictCreated = await createDriveMarkdownFile(
@@ -250,6 +326,147 @@ export async function syncVaultRoot(
 		}
 		await upsertNode(pushedFile)
 		summary.pushed += 1
+	}
+
+	nodes = await vaultRepository.listByRoot(rootId)
+	byId = new Map(nodes.map((node) => [node.id, node]))
+
+	const localByDriveId = new Map<string, VaultNode>()
+	for (const node of nodes) {
+		if (node.driveId) {
+			localByDriveId.set(node.driveId, node)
+		}
+	}
+
+	const folderLocalIdByDriveId = new Map<string, string>([[rootId, rootId]])
+	for (const node of nodes) {
+		if (node.kind !== "folder") {
+			continue
+		}
+		if (node.driveId) {
+			folderLocalIdByDriveId.set(node.driveId, node.id)
+		}
+	}
+
+	const remote = await scanRemoteVault(session.accessToken, rootId)
+
+	for (const remoteFolder of remote.folders) {
+		const parentLocalId =
+			folderLocalIdByDriveId.get(remoteFolder.parentDriveId) ?? rootId
+		const localFolder = localByDriveId.get(remoteFolder.id)
+
+		if (!localFolder) {
+			const createdFolder: VaultNode = {
+				id: remoteFolder.id,
+				rootId,
+				parentId: parentLocalId,
+				kind: "folder",
+				name: remoteFolder.name,
+				driveId: remoteFolder.id,
+				dirty: false,
+				updatedAt: now(),
+				lastSyncedAt: now(),
+			}
+			await upsertNode(createdFolder)
+			localByDriveId.set(remoteFolder.id, createdFolder)
+			folderLocalIdByDriveId.set(remoteFolder.id, createdFolder.id)
+			summary.pulled += 1
+			continue
+		}
+
+		folderLocalIdByDriveId.set(remoteFolder.id, localFolder.id)
+		if (localFolder.dirty) {
+			continue
+		}
+
+		const needUpdate =
+			localFolder.parentId !== parentLocalId ||
+			localFolder.name !== remoteFolder.name
+		if (!needUpdate) {
+			continue
+		}
+
+		await upsertNode({
+			...localFolder,
+			parentId: parentLocalId,
+			name: remoteFolder.name,
+			dirty: false,
+			lastSyncedAt: now(),
+		})
+		summary.pulled += 1
+	}
+
+	for (const remoteFile of remote.files) {
+		const parentLocalId =
+			folderLocalIdByDriveId.get(remoteFile.parentDriveId) ?? rootId
+		const localFile = localByDriveId.get(remoteFile.id)
+
+		if (!localFile) {
+			let content: string
+			try {
+				content = await downloadMarkdown(session.accessToken, remoteFile.id)
+			} catch (error) {
+				if (isFileAuthorizationError(error)) {
+					summary.skipped += 1
+					continue
+				}
+				throw error
+			}
+			const createdFile: VaultNode = {
+				id: remoteFile.id,
+				rootId,
+				parentId: parentLocalId,
+				kind: "file",
+				name: remoteFile.name,
+				content,
+				driveId: remoteFile.id,
+				dirty: false,
+				updatedAt: now(),
+				lastSyncedAt: now(),
+				lastRemoteModifiedAt: remoteFile.modifiedAt,
+			}
+			await upsertNode(createdFile)
+			localByDriveId.set(remoteFile.id, createdFile)
+			summary.pulled += 1
+			continue
+		}
+
+		if (localFile.dirty) {
+			continue
+		}
+
+		const knownRemoteModifiedAt = localFile.lastRemoteModifiedAt ?? 0
+		const remoteChanged = remoteFile.modifiedAt > knownRemoteModifiedAt
+		const locationOrNameChanged =
+			localFile.parentId !== parentLocalId || localFile.name !== remoteFile.name
+
+		if (!remoteChanged && !locationOrNameChanged) {
+			continue
+		}
+
+		let nextContent = localFile.content
+		if (remoteChanged) {
+			try {
+				nextContent = await downloadMarkdown(session.accessToken, remoteFile.id)
+			} catch (error) {
+				if (isFileAuthorizationError(error)) {
+					summary.skipped += 1
+					continue
+				}
+				throw error
+			}
+		}
+
+		await upsertNode({
+			...localFile,
+			parentId: parentLocalId,
+			name: remoteFile.name,
+			content: nextContent,
+			dirty: false,
+			lastSyncedAt: now(),
+			lastRemoteModifiedAt: remoteFile.modifiedAt,
+		})
+		summary.pulled += 1
 	}
 
 	return summary

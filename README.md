@@ -33,6 +33,11 @@ copy .env.example .env
 pnpm dev
 ```
 
+## 權限說明
+
+- 目前 OAuth scope 使用 `https://www.googleapis.com/auth/drive`，可讀寫你授權帳號下的 Drive 檔案，才能完整同步整個資料夾樹。
+- 如果你先前已登入過舊權限，請先登出再重新登入一次，讓 Google 重新跳出授權同意畫面。
+
 ## Structure
 
 - `src/services/googleAuth.ts`: Google OAuth 登入

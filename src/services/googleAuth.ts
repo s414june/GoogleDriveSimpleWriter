@@ -38,8 +38,7 @@ declare global {
 }
 
 const GSI_SCRIPT = "https://accounts.google.com/gsi/client"
-const DRIVE_SCOPE =
-	"https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.metadata.readonly"
+const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 
 let sdkReady: Promise<void> | null = null
 
