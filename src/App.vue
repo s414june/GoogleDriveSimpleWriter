@@ -12,13 +12,30 @@ const INSTALL_HINT_DISMISSED_KEY = "pwa-install-hint-dismissed"
 const APP_INSTALLED_KEY = "pwa-installed"
 
 function isRunningStandaloneMode(): boolean {
-	const isStandaloneDisplayMode = window.matchMedia(
-		"(display-mode: standalone)",
-	).matches
+	const isStandaloneDisplayMode =
+		typeof window.matchMedia === "function"
+			? window.matchMedia("(display-mode: standalone)").matches
+			: false
 	const isStandaloneIOS =
 		(window.navigator as Navigator & { standalone?: boolean }).standalone ===
 		true
 	return isStandaloneDisplayMode || isStandaloneIOS
+}
+
+function safeStorageSet(key: string, value: string): void {
+	try {
+		localStorage.setItem(key, value)
+	} catch {
+		// Ignore storage failures on restricted browser modes.
+	}
+}
+
+function safeStorageGet(key: string): string | null {
+	try {
+		return localStorage.getItem(key)
+	} catch {
+		return null
+	}
 }
 
 const online = ref(navigator.onLine)
@@ -62,20 +79,20 @@ function requestAddFolder(): void {
 }
 
 function markInstallHintDismissed(): void {
-	localStorage.setItem(INSTALL_HINT_DISMISSED_KEY, "1")
+	safeStorageSet(INSTALL_HINT_DISMISSED_KEY, "1")
 }
 
 function isInstallHintDismissed(): boolean {
-	return localStorage.getItem(INSTALL_HINT_DISMISSED_KEY) === "1"
+	return safeStorageGet(INSTALL_HINT_DISMISSED_KEY) === "1"
 }
 
 function markAppInstalled(): void {
-	localStorage.setItem(APP_INSTALLED_KEY, "1")
+	safeStorageSet(APP_INSTALLED_KEY, "1")
 }
 
 function isAppInstalled(): boolean {
 	return (
-		localStorage.getItem(APP_INSTALLED_KEY) === "1" || isRunningStandaloneMode()
+		safeStorageGet(APP_INSTALLED_KEY) === "1" || isRunningStandaloneMode()
 	)
 }
 

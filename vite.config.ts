@@ -17,7 +17,7 @@ export default defineConfig({
 		vue(),
 		tailwindcss(),
 		VitePWA({
-			registerType: "autoUpdate",
+			registerType: "prompt",
 			includeAssets: ["icon.svg"],
 			manifest: {
 				name: "Google Drive Simple Writer",

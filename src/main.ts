@@ -4,7 +4,15 @@ import App from "./App.vue"
 import { registerSW } from "virtual:pwa-register"
 import { router } from "./router"
 
-registerSW({ immediate: true })
+if (import.meta.env.PROD) {
+	registerSW({ immediate: true })
+} else if ("serviceWorker" in navigator) {
+	void navigator.serviceWorker.getRegistrations().then((registrations) => {
+		for (const registration of registrations) {
+			void registration.unregister()
+		}
+	})
+}
 
 const app = createApp(App)
 app.use(router)
