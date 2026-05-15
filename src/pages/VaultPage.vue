@@ -573,7 +573,7 @@ watch(
 			v-show="mode === 'edit'"
 			class="flex flex-1 min-h-0 min-w-0 flex-col gap-2.5">
 			<div
-				class="flex items-center justify-between gap-2 border-b-2 border-teal-500 pb-2">
+				class="w-full flex items-center justify-between gap-2 border-b-2 border-teal-500 pb-2">
 				<button
 					class="px-3 py-1 text-xs font-bold text-teal-500"
 					@click="closeEditor">
