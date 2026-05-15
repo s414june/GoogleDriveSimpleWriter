@@ -34,7 +34,6 @@ const mode = ref<"list" | "edit">("list")
 const editorHost = ref<HTMLDivElement | null>(null)
 
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
-let autoSyncTimer: ReturnType<typeof setTimeout> | null = null
 let vditor: Vditor | null = null
 const autoSaving = ref(false)
 const autoSyncing = ref(false)
@@ -114,7 +113,8 @@ function selectFile(id: string): void {
 	suppressAutoSave.value = false
 }
 
-function closeEditor(): void {
+async function closeEditor(): Promise<void> {
+	await flushPendingAutoSave()
 	if (autoSaveTimer) {
 		clearTimeout(autoSaveTimer)
 		autoSaveTimer = null
@@ -287,15 +287,12 @@ function scheduleAutoSave(): void {
 	}, 450)
 }
 
-function scheduleAutoSync(): void {
-	if (autoSyncTimer) {
-		clearTimeout(autoSyncTimer)
+async function flushPendingAutoSave(): Promise<void> {
+	if (autoSaveTimer) {
+		clearTimeout(autoSaveTimer)
+		autoSaveTimer = null
 	}
-
-	autoSyncTimer = setTimeout(() => {
-		autoSyncTimer = null
-		void runAutoSync()
-	}, 800)
+	await runAutoSave(true)
 }
 
 async function runAutoSync(): Promise<void> {
@@ -313,7 +310,7 @@ async function runAutoSync(): Promise<void> {
 		if (summary.conflicts > 0) {
 			workspace.status.value = `偵測到 ${summary.conflicts} 個衝突，已建立衝突副本`
 		}
-		if (summary.pulled > 0 || summary.conflicts > 0 || mode.value === "list") {
+		if (summary.pushed > 0 || summary.pulled > 0 || summary.conflicts > 0) {
 			await refreshNodes()
 		}
 	} catch (error) {
@@ -324,8 +321,8 @@ async function runAutoSync(): Promise<void> {
 	}
 }
 
-async function runAutoSave(): Promise<void> {
-	if (mode.value !== "edit" || autoSaving.value) {
+async function runAutoSave(force = false): Promise<void> {
+	if ((!force && mode.value !== "edit") || autoSaving.value) {
 		return
 	}
 
@@ -383,7 +380,6 @@ async function runAutoSave(): Promise<void> {
 		if (createdNewFile || renamedFile) {
 			await refreshNodes()
 		}
-		scheduleAutoSync()
 	} catch (error) {
 		workspace.status.value =
 			error instanceof Error ? error.message : "自動儲存失敗"
@@ -495,11 +491,6 @@ onBeforeUnmount(() => {
 		autoSaveTimer = null
 	}
 
-	if (autoSyncTimer) {
-		clearTimeout(autoSyncTimer)
-		autoSyncTimer = null
-	}
-
 	if (vditor) {
 		vditor.destroy()
 		vditor = null
@@ -517,13 +508,18 @@ watch(titleInput, () => {
 
 watch(
 	mode,
-	async (value) => {
-		if (value !== "edit") {
+	async (value, oldValue) => {
+		if (value === "edit") {
+			await nextTick()
+			await ensureEditorReady()
+			applyEditorContent(editorContent.value)
 			return
 		}
-		await nextTick()
-		await ensureEditorReady()
-		applyEditorContent(editorContent.value)
+
+		if (oldValue === "edit" && value === "list") {
+			await flushPendingAutoSave()
+			await runAutoSync()
+		}
 	},
 	{ immediate: true },
 )
