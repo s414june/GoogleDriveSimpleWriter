@@ -38,6 +38,13 @@ function openFile(id: string): void {
 	emit("clear-check")
 	emit("open-file", id)
 }
+
+function displayName(node: VaultNode): string {
+	if (node.kind === "file") {
+		return node.name.replace(/\.md$/i, "")
+	}
+	return node.name
+}
 </script>
 
 <template>
@@ -64,7 +71,7 @@ function openFile(id: string): void {
 							: 'text-teal-700 hover:bg-teal-50'
 					"
 					@click.stop="openFolder(node.id)">
-					📁 {{ node.name }}
+					📁 {{ displayName(node) }}
 				</button>
 
 				<button
@@ -76,7 +83,7 @@ function openFile(id: string): void {
 							: 'text-cyan-700 hover:bg-cyan-50'
 					"
 					@click.stop="openFile(node.id)">
-					📝 {{ node.name }}
+					📝 {{ displayName(node) }}
 				</button>
 			</div>
 

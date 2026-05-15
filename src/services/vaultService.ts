@@ -10,6 +10,11 @@ function now(): number {
 	return Date.now()
 }
 
+function toMillis(value: string): number {
+	const time = Date.parse(value)
+	return Number.isNaN(time) ? now() : time
+}
+
 function makeLocalId(): string {
 	return `local-${crypto.randomUUID()}`
 }
@@ -53,6 +58,8 @@ async function walkDriveFolder(
 			driveId: file.id,
 			dirty: false,
 			updatedAt: now(),
+			lastSyncedAt: now(),
+			lastRemoteModifiedAt: toMillis(file.modifiedTime),
 		})
 	}
 }

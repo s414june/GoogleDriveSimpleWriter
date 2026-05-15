@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useRouter } from "vue-router"
+import Vditor from "vditor"
+import "vditor/dist/index.css"
 import VaultTree from "../components/VaultTree.vue"
 import { useDriveWorkspace } from "../composables/useDriveWorkspace"
 import {
@@ -11,6 +13,7 @@ import {
 	renameNode,
 	updateMarkdownNode,
 } from "../services/vaultService"
+import { syncVaultRoot } from "../services/vaultSyncService"
 import type { VaultNode } from "../types"
 
 const router = useRouter()
@@ -28,10 +31,15 @@ const draftParentFolderId = ref("")
 const folderDialogOpen = ref(false)
 const folderNameInput = ref("")
 const mode = ref<"list" | "edit">("list")
+const editorHost = ref<HTMLDivElement | null>(null)
 
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
+let autoSyncTimer: ReturnType<typeof setTimeout> | null = null
+let vditor: Vditor | null = null
 const autoSaving = ref(false)
+const autoSyncing = ref(false)
 const suppressAutoSave = ref(false)
+const syncingEditorValue = ref(false)
 
 const rootId = computed(() => workspace.selectedRootFolderId.value)
 const singleFolderTarget = computed(() =>
@@ -48,6 +56,10 @@ const errorStatus = computed(() => {
 	const current = workspace.status.value
 	return /(失敗|錯誤|缺少|失效|不可|找不到|尚未)/.test(current) ? current : ""
 })
+
+function ensureMdName(name: string): string {
+	return name.endsWith(".md") ? name : `${name}.md`
+}
 
 async function refreshNodes(): Promise<void> {
 	if (!rootId.value) {
@@ -199,6 +211,51 @@ function onTitleInputEvent(event: Event): void {
 	onTitleInput(target?.value ?? "")
 }
 
+function applyEditorContent(nextContent: string): void {
+	if (!vditor) {
+		return
+	}
+
+	const current = vditor.getValue()
+	if (current === nextContent) {
+		return
+	}
+
+	syncingEditorValue.value = true
+	vditor.setValue(nextContent)
+	queueMicrotask(() => {
+		syncingEditorValue.value = false
+	})
+}
+
+async function ensureEditorReady(): Promise<void> {
+	if (vditor || !editorHost.value) {
+		return
+	}
+
+	vditor = new Vditor(editorHost.value, {
+		mode: "ir",
+		height: "100%",
+		cache: {
+			enable: false,
+		},
+		toolbar: [],
+		counter: {
+			enable: false,
+		},
+		placeholder: "開始編輯 Markdown 內容",
+		input(value) {
+			if (syncingEditorValue.value) {
+				return
+			}
+			editorContent.value = value
+		},
+		after() {
+			applyEditorContent(editorContent.value)
+		},
+	})
+}
+
 function resolveNextTitle(): string | null {
 	const typed = titleInput.value.trim()
 	if (typed) {
@@ -230,6 +287,43 @@ function scheduleAutoSave(): void {
 	}, 450)
 }
 
+function scheduleAutoSync(): void {
+	if (autoSyncTimer) {
+		clearTimeout(autoSyncTimer)
+	}
+
+	autoSyncTimer = setTimeout(() => {
+		autoSyncTimer = null
+		void runAutoSync()
+	}, 800)
+}
+
+async function runAutoSync(): Promise<void> {
+	if (autoSyncing.value || !navigator.onLine) {
+		return
+	}
+
+	if (!workspace.session.value || !rootId.value) {
+		return
+	}
+
+	autoSyncing.value = true
+	try {
+		const summary = await syncVaultRoot(workspace.session.value, rootId.value)
+		if (summary.conflicts > 0) {
+			workspace.status.value = `偵測到 ${summary.conflicts} 個衝突，已建立衝突副本`
+		}
+		if (summary.pulled > 0 || summary.conflicts > 0 || mode.value === "list") {
+			await refreshNodes()
+		}
+	} catch (error) {
+		workspace.status.value =
+			error instanceof Error ? error.message : "自動同步失敗"
+	} finally {
+		autoSyncing.value = false
+	}
+}
+
 async function runAutoSave(): Promise<void> {
 	if (mode.value !== "edit" || autoSaving.value) {
 		return
@@ -248,6 +342,8 @@ async function runAutoSave(): Promise<void> {
 	autoSaving.value = true
 	try {
 		let fileId = selectedFileId.value
+		let createdNewFile = false
+		let renamedFile = false
 		if (!fileId) {
 			const parentId = draftParentFolderId.value || selectedFolderId.value
 			if (!parentId) {
@@ -263,6 +359,7 @@ async function runAutoSave(): Promise<void> {
 			fileId = created.id
 			selectedFileId.value = fileId
 			selectedFolderId.value = parentId
+			createdNewFile = true
 			if (!titleInput.value.trim()) {
 				titleInput.value = initialTitle
 			}
@@ -270,7 +367,12 @@ async function runAutoSave(): Promise<void> {
 
 		const nextTitle = resolveNextTitle()
 		if (nextTitle) {
-			await renameNode(fileId, nextTitle)
+			const currentNode = nodes.value.find((node) => node.id === fileId)
+			const targetName = ensureMdName(nextTitle)
+			if (currentNode?.name !== targetName) {
+				await renameNode(fileId, nextTitle)
+				renamedFile = true
+			}
 			if (!titleInput.value.trim()) {
 				titleInput.value = nextTitle
 			}
@@ -278,7 +380,10 @@ async function runAutoSave(): Promise<void> {
 
 		await updateMarkdownNode(fileId, editorContent.value)
 		titleEdited.value = false
-		await refreshNodes()
+		if (createdNewFile || renamedFile) {
+			await refreshNodes()
+		}
+		scheduleAutoSync()
 	} catch (error) {
 		workspace.status.value =
 			error instanceof Error ? error.message : "自動儲存失敗"
@@ -389,21 +494,45 @@ onBeforeUnmount(() => {
 		clearTimeout(autoSaveTimer)
 		autoSaveTimer = null
 	}
+
+	if (autoSyncTimer) {
+		clearTimeout(autoSyncTimer)
+		autoSyncTimer = null
+	}
+
+	if (vditor) {
+		vditor.destroy()
+		vditor = null
+	}
 })
 
 watch(editorContent, () => {
 	scheduleAutoSave()
+	applyEditorContent(editorContent.value)
 })
 
 watch(titleInput, () => {
 	scheduleAutoSave()
 })
+
+watch(
+	mode,
+	async (value) => {
+		if (value !== "edit") {
+			return
+		}
+		await nextTick()
+		await ensureEditorReady()
+		applyEditorContent(editorContent.value)
+	},
+	{ immediate: true },
+)
 </script>
 
 <template>
 	<section
-		class="flex flex-col h-[calc(100vh-40px)] content-start gap-2.5 bg-white p-3 relative">
-		<template v-if="mode === 'list'">
+		class="flex flex-col h-[calc(100vh-40px)] min-h-0 content-start gap-2.5 bg-white p-3 relative">
+		<div v-show="mode === 'list'" class="relative flex flex-1 min-h-0 flex-col">
 			<div
 				v-show="hasCheckedMode || hasSingleFolderMode"
 				class="absolute right-4 top-0 z-10 flex flex-wrap gap-2 py-2 right-0"
@@ -428,8 +557,8 @@ watch(titleInput, () => {
 					新增資料夾
 				</button>
 			</div>
-			<div class="relative grow" @click="clearListSelection">
-				<div class="max-h-[520px] overflow-y-auto bg-white">
+			<div class="relative flex-1 min-h-0" @click="clearListSelection">
+				<div class="h-full overflow-y-auto bg-white">
 					<VaultTree
 						v-if="rootId"
 						:nodes="nodes"
@@ -453,9 +582,9 @@ watch(titleInput, () => {
 					</button>
 				</div>
 			</div>
-		</template>
+		</div>
 
-		<template v-else>
+		<div v-show="mode === 'edit'" class="flex flex-1 min-h-0 flex-col gap-2.5">
 			<div
 				class="flex items-center justify-between gap-2 border-b-2 border-teal-500 pb-2">
 				<button
@@ -468,13 +597,13 @@ watch(titleInput, () => {
 					class="min-w-0 flex-1 rounded-lg border border-transparent bg-white px-3 py-1 text-sm font-semibold text-teal-700 outline-none focus:border-teal-300"
 					placeholder="輸入標題（留空會自動使用內容前10字）"
 					@input="onTitleInputEvent" />
+				<p class="text-xs font-medium text-teal-500">
+					{{ autoSyncing ? "同步中..." : "" }}
+				</p>
 			</div>
 
-			<textarea
-				v-model="editorContent"
-				class="w-full flex-1 min-h-0 resize-none rounded-none border-0 bg-white px-3 py-2.5 text-sm text-teal-700 outline-none"
-				placeholder="開始編輯 Markdown 內容" />
-		</template>
+			<div ref="editorHost" class="vditor-host w-full flex-1 min-h-0" />
+		</div>
 
 		<div
 			v-if="folderDialogOpen"
@@ -507,3 +636,25 @@ watch(titleInput, () => {
 		<p v-if="errorStatus" class="text-sm text-fuchsia-500">{{ errorStatus }}</p>
 	</section>
 </template>
+
+<style scoped>
+.vditor-host {
+	min-height: 0;
+}
+
+.vditor-host :deep(.vditor) {
+	border: 0;
+	border-radius: 0;
+	height: 100%;
+}
+
+.vditor-host :deep(.vditor-reset) {
+	padding: 12px;
+}
+
+.vditor-host :deep(.vditor-toolbar),
+.vditor-host :deep(.vditor-counter),
+.vditor-host :deep(.vditor-tip) {
+	display: none;
+}
+</style>

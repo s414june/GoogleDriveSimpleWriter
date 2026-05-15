@@ -123,3 +123,107 @@ export async function uploadMarkdown(
 		throw new Error(`上傳失敗: ${response.status} ${message}`)
 	}
 }
+
+export async function getDriveFileMetadata(
+	accessToken: string,
+	fileId: string,
+): Promise<DriveMarkdownFile> {
+	const fields = encodeURIComponent("id,name,modifiedTime")
+	const url = `${DRIVE_API}/files/${fileId}?fields=${fields}`
+	return requestJson<DriveMarkdownFile>(url, accessToken)
+}
+
+export async function updateDriveFileName(
+	accessToken: string,
+	fileId: string,
+	name: string,
+): Promise<void> {
+	const url = `${DRIVE_API}/files/${fileId}`
+	const response = await fetch(url, {
+		method: "PATCH",
+		headers: {
+			...authHeaders(accessToken),
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({ name }),
+	})
+
+	if (!response.ok) {
+		const message = await response.text()
+		throw new Error(`更新名稱失敗: ${response.status} ${message}`)
+	}
+}
+
+export async function createDriveFolder(
+	accessToken: string,
+	parentId: string,
+	name: string,
+): Promise<{ id: string; name: string; modifiedTime: string }> {
+	const url = `${DRIVE_API}/files?fields=id,name,modifiedTime`
+	const response = await fetch(url, {
+		method: "POST",
+		headers: {
+			...authHeaders(accessToken),
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+			name,
+			mimeType: "application/vnd.google-apps.folder",
+			parents: [parentId],
+		}),
+	})
+
+	if (!response.ok) {
+		const message = await response.text()
+		throw new Error(`建立資料夾失敗: ${response.status} ${message}`)
+	}
+
+	return response.json() as Promise<{
+		id: string
+		name: string
+		modifiedTime: string
+	}>
+}
+
+export async function createDriveMarkdownFile(
+	accessToken: string,
+	parentId: string,
+	name: string,
+	content: string,
+): Promise<DriveMarkdownFile> {
+	const normalizedName = name.endsWith(".md") ? name : `${name}.md`
+	const metadata = {
+		name: normalizedName,
+		mimeType: "text/markdown",
+		parents: [parentId],
+	}
+	const boundary = `gdsw-${crypto.randomUUID()}`
+	const delimiter = `--${boundary}`
+	const closeDelimiter = `--${boundary}--`
+	const body =
+		`${delimiter}\r\n` +
+		"Content-Type: application/json; charset=UTF-8\r\n\r\n" +
+		`${JSON.stringify(metadata)}\r\n` +
+		`${delimiter}\r\n` +
+		"Content-Type: text/markdown; charset=utf-8\r\n\r\n" +
+		`${content}\r\n` +
+		`${closeDelimiter}`
+
+	const fields = encodeURIComponent("id,name,modifiedTime")
+	const url = `${DRIVE_UPLOAD_API}/files?uploadType=multipart&fields=${fields}`
+	const response = await fetch(url, {
+		method: "POST",
+		headers: {
+			...authHeaders(accessToken),
+			"Content-Type": `multipart/related; boundary=${boundary}`,
+		},
+		body,
+	})
+
+	if (!response.ok) {
+		const message = await response.text()
+		throw new Error(`建立 Markdown 檔失敗: ${response.status} ${message}`)
+	}
+
+	return response.json() as Promise<DriveMarkdownFile>
+}

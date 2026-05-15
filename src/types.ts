@@ -45,4 +45,6 @@ export interface VaultNode {
 	driveId?: string
 	dirty: boolean
 	updatedAt: number
+	lastSyncedAt?: number
+	lastRemoteModifiedAt?: number
 }
