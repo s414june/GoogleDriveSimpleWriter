@@ -33,8 +33,6 @@ const folderNameInput = ref("")
 const mode = ref<"list" | "edit">("list")
 const editorHost = ref<HTMLDivElement | null>(null)
 
-let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
-let listAutoSyncTimer: ReturnType<typeof setInterval> | null = null
 let vditor: Vditor | null = null
 const autoSaving = ref(false)
 const autoSyncing = ref(false)
@@ -115,14 +113,11 @@ function selectFile(id: string): void {
 }
 
 async function closeEditor(): Promise<void> {
-	await flushPendingAutoSave()
-	if (autoSaveTimer) {
-		clearTimeout(autoSaveTimer)
-		autoSaveTimer = null
-	}
+	await runAutoSave(true)
 	titleEdited.value = false
 	draftParentFolderId.value = ""
 	mode.value = "list"
+	await refreshNodes()
 }
 
 function clearChecked(): void {
@@ -273,29 +268,6 @@ function resolveNextTitle(): string | null {
 	return null
 }
 
-function scheduleAutoSave(): void {
-	if (mode.value !== "edit" || suppressAutoSave.value) {
-		return
-	}
-
-	if (autoSaveTimer) {
-		clearTimeout(autoSaveTimer)
-	}
-
-	autoSaveTimer = setTimeout(() => {
-		autoSaveTimer = null
-		void runAutoSave()
-	}, 450)
-}
-
-async function flushPendingAutoSave(): Promise<void> {
-	if (autoSaveTimer) {
-		clearTimeout(autoSaveTimer)
-		autoSaveTimer = null
-	}
-	await runAutoSave(true)
-}
-
 async function runAutoSync(): Promise<void> {
 	if (autoSyncing.value || !navigator.onLine) {
 		return
@@ -333,26 +305,6 @@ function onResumeListSync(): void {
 		return
 	}
 	void runAutoSync()
-}
-
-function startListAutoSync(): void {
-	if (listAutoSyncTimer) {
-		clearInterval(listAutoSyncTimer)
-	}
-	listAutoSyncTimer = setInterval(() => {
-		if (!shouldSyncInListMode()) {
-			return
-		}
-		void runAutoSync()
-	}, 20000)
-}
-
-function stopListAutoSync(): void {
-	if (!listAutoSyncTimer) {
-		return
-	}
-	clearInterval(listAutoSyncTimer)
-	listAutoSyncTimer = null
 }
 
 function onVisibilityChange(): void {
@@ -511,7 +463,6 @@ onMounted(async () => {
 	window.addEventListener("focus", onResumeListSync)
 	window.addEventListener("online", onResumeListSync)
 	document.addEventListener("visibilitychange", onVisibilityChange)
-	startListAutoSync()
 
 	await workspace.restoreSessionFromStorage()
 	if (!workspace.session.value) {
@@ -534,12 +485,6 @@ onBeforeUnmount(() => {
 	window.removeEventListener("focus", onResumeListSync)
 	window.removeEventListener("online", onResumeListSync)
 	document.removeEventListener("visibilitychange", onVisibilityChange)
-	stopListAutoSync()
-
-	if (autoSaveTimer) {
-		clearTimeout(autoSaveTimer)
-		autoSaveTimer = null
-	}
 
 	if (vditor) {
 		vditor.destroy()
@@ -548,17 +493,12 @@ onBeforeUnmount(() => {
 })
 
 watch(editorContent, () => {
-	scheduleAutoSave()
 	applyEditorContent(editorContent.value)
-})
-
-watch(titleInput, () => {
-	scheduleAutoSave()
 })
 
 watch(
 	mode,
-	async (value, oldValue) => {
+	async (value) => {
 		if (value === "edit") {
 			await nextTick()
 			await ensureEditorReady()
@@ -566,12 +506,7 @@ watch(
 			return
 		}
 
-		if (value === "list" && oldValue !== "edit") {
-			void runAutoSync()
-		}
-
-		if (oldValue === "edit" && value === "list") {
-			await flushPendingAutoSave()
+		if (value === "list") {
 			await runAutoSync()
 		}
 	},
@@ -644,7 +579,7 @@ watch(
 				</button>
 				<input
 					:value="titleInput"
-					class="min-w-0 flex-1 rounded-lg border border-transparent bg-white px-3 py-1 text-sm font-semibold text-teal-700 outline-none focus:border-teal-300"
+					class="flex-1 rounded-lg border border-transparent bg-white px-3 py-1 text-sm font-semibold text-teal-700 outline-none focus:border-teal-300"
 					placeholder="輸入標題（留空會自動使用內容前10字）"
 					@input="onTitleInputEvent" />
 				<p class="text-xs font-medium text-teal-500">
