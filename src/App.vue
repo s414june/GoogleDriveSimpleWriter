@@ -9,12 +9,24 @@ type BeforeInstallPromptEvent = Event & {
 }
 
 const INSTALL_HINT_DISMISSED_KEY = "pwa-install-hint-dismissed"
+const APP_INSTALLED_KEY = "pwa-installed"
+
+function isRunningStandaloneMode(): boolean {
+	const isStandaloneDisplayMode = window.matchMedia(
+		"(display-mode: standalone)",
+	).matches
+	const isStandaloneIOS =
+		(window.navigator as Navigator & { standalone?: boolean }).standalone ===
+		true
+	return isStandaloneDisplayMode || isStandaloneIOS
+}
 
 const online = ref(navigator.onLine)
 const navMenuOpen = ref(false)
 const installPromptEvent = ref<BeforeInstallPromptEvent | null>(null)
 const installHintVisible = ref(false)
 const installPrompting = ref(false)
+const appInstalled = ref(false)
 
 const route = useRoute()
 const router = useRouter()
@@ -57,29 +69,45 @@ function isInstallHintDismissed(): boolean {
 	return localStorage.getItem(INSTALL_HINT_DISMISSED_KEY) === "1"
 }
 
+function markAppInstalled(): void {
+	localStorage.setItem(APP_INSTALLED_KEY, "1")
+}
+
+function isAppInstalled(): boolean {
+	return (
+		localStorage.getItem(APP_INSTALLED_KEY) === "1" || isRunningStandaloneMode()
+	)
+}
+
 function dismissInstallHint(): void {
 	installHintVisible.value = false
 	markInstallHintDismissed()
 }
 
 function onBeforeInstallPrompt(event: Event): void {
+	event.preventDefault()
+	installPromptEvent.value = event as BeforeInstallPromptEvent
 	if (isInstallHintDismissed()) {
 		return
 	}
-
-	event.preventDefault()
-	installPromptEvent.value = event as BeforeInstallPromptEvent
 	installHintVisible.value = true
 }
 
 function onAppInstalled(): void {
+	appInstalled.value = true
 	installHintVisible.value = false
 	installPromptEvent.value = null
+	markAppInstalled()
 	markInstallHintDismissed()
 }
 
 async function installToHomeScreen(): Promise<void> {
-	if (!installPromptEvent.value || installPrompting.value) {
+	if (installPrompting.value) {
+		return
+	}
+
+	if (!installPromptEvent.value) {
+		installHintVisible.value = true
 		return
 	}
 
@@ -89,13 +117,12 @@ async function installToHomeScreen(): Promise<void> {
 	installPrompting.value = false
 
 	if (choice.outcome === "accepted") {
-		installHintVisible.value = false
 		installPromptEvent.value = null
-		markInstallHintDismissed()
 	}
 }
 
 onMounted(() => {
+	appInstalled.value = isAppInstalled()
 	window.addEventListener("online", onOnline)
 	window.addEventListener("offline", onOffline)
 	window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt)
@@ -170,7 +197,7 @@ watch(
 					登出
 				</button>
 				<button
-					v-if="installPromptEvent"
+					v-if="!appInstalled"
 					class="rounded-full border border-teal-300 px-3 py-2 text-xs font-bold text-teal-600"
 					@click="installToHomeScreen">
 					加入主畫面

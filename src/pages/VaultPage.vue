@@ -584,9 +584,6 @@ watch(
 					class="min-w-0 flex-1 rounded-lg border border-transparent bg-white px-3 py-1 text-sm font-semibold text-teal-700 outline-none focus:border-teal-300"
 					placeholder="輸入標題（留空會自動使用內容前10字）"
 					@input="onTitleInputEvent" />
-				<p class="text-xs font-medium text-teal-500">
-					{{ autoSyncing ? "同步中..." : "" }}
-				</p>
 			</div>
 
 			<div ref="editorHost" class="vditor-host w-full flex-1 min-h-0" />
